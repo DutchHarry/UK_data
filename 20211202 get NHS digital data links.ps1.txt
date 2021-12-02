@@ -1,0 +1,63 @@
+<#
+20211202 get NHS digital data links.ps1.txt
+(selected by year, because NSHD limites listing to about 1k links, so subset needs to be below that)
+
+For Powershell Core 7: 
+NEEDS 
+Install-Module -Name PowerHTML 
+
+#>
+
+# list of links to pages
+$fileout1 = "s:\_ue\20211202NHSdigitallinks_6.txt"
+
+# list of linka to actual files/publications
+$fileout2 = "s:\_ue\20211202NHSdigitallinks_6_files.txt"
+
+
+# site only allows about 102 pages of data, thus about 1020 links
+# therefor looping by year first
+$NHSdigitalsiteprefix = "https://digital.nhs.uk"
+#$nl = [Environment]::Newline
+$links = $null
+For ($year = 2000; $year -le 2022; $year++){
+  #$url = "https://digital.nhs.uk/search?searchTab=data"
+  $url = "https://digital.nhs.uk/search?searchTab=data&year=$year"
+  $a = Invoke-Webrequest -Uri $url
+  # get HTML for total number 
+  $b = $a | ConvertFrom-Html 
+  [int]$numofpubs = $b.SelectNodes('html/body//span')[13].Innertext
+  #[int]$numofpubs = @(@(@(@(@($b.Elements('html').Elements('body').Elements('div'))[1].Elements('div').Elements('div').Elements('div'))[1].Elements('div'))[1].Elements('div'))[0].Elements('div').Elements('div'))[0].Elements('div').Elements('span').Innertext
+  # nothing to do about pagesize of 10
+  $NumberperPage = 10
+  $Numofpages = [Math]::Ceiling($numofpubs/$NumberperPage)
+
+	For ($pagenum=1; $pagenum -le $Numofpages; $pagenum++){
+	  $url = "https://digital.nhs.uk/search?searchTab=data&r59_r2:page=$pagenum&r59_r2:pageSize=10&year=$year"
+	  #$url = "https://digital.nhs.uk/search?searchTab=data&r59_r2:page=$pagenum"
+	  $a = Invoke-Webrequest -Uri $url
+	  # get the 10 links on the page
+	  $links += (($a.links.href | ?{($_ -like '*/data-and-information/*') -and ($_ -notlike '*digital.nhs.uk*')} | %{ "$NHSdigitalsiteprefix$_" }).Replace("http","`r`nhttp"))
+	  Write-Host "Year $year Page $pagenum"
+	}
+}
+
+# strip 1st crlf and save
+$links.substring(2) | Out-File $fileout1
+
+
+##################################
+# getting data links
+$directory = "S:\_ue\"
+$linksfile = $fileout1 #"s:\_ue\20211201NHSdigitallinks_6.txt"
+
+$links = $null
+$reader = New-Object -TypeName System.IO.StreamReader -ArgumentList $linksfile
+while ( $url = $reader.ReadLine() ) {
+  $a = Invoke-Webrequest -Uri $url
+  $links += ($a.links.href | ?{($_ -like '*files.digital.nhs.uk*') -or ($_ -like '*bit.ly*')} | %{$_.Replace("http","`r`nhttp")})
+}
+
+# strip 1st CRLF
+$links.substring(2) | Out-File $fileout2
+
