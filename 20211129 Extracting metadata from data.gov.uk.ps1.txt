@@ -1,0 +1,225 @@
+<#
+Extracting metadata from data.gov.uk
+
+with SQL scripts for processing at the end
+#>
+
+$extractiondate = "20211129"    # <-- CHANGE      used in filenames
+$filename = "datagov$extractiondate.json" 
+$json1 = $null
+$json2 = $null
+
+$url = "https://ckan.publishing.service.gov.uk/api/action/package_list"
+$json1 = Invoke-RestMethod -Uri $url
+$iterations = $json1.result.count
+
+for($i=0; $i -lt $iterations; $i++){
+
+$id = $json1.result[$i]
+$url2 = "https://data.gov.uk/api/action/package_show?id=$id"
+$json2 = Invoke-RestMethod -Uri $url2
+
+$json3=$null
+$json3 = '{"i":"'+"$i"+'"'+',"id":"'+"$id"+'","data":['+($json2.result | ConvertTo-Json -Depth 100 -Compress)+']},'
+$json3 | Out-File -Filepath $filename -Encoding UTF8 -Append
+}
+
+
+<#
+-- SQL Scripts
+/*
+CREATE TABLE [[Tbl_datagov_JSON_staging](
+	[hID] [int] IDENTITY(0,1) NOT NULL,
+	[StringLength]  AS (len([data])) PERSISTED,
+	[StringHash]  AS (CONVERT([varchar](32),hashbytes('MD5',[data]),(2))) PERSISTED,
+	[i] [varchar](100) NULL,
+	[id] [varchar](100) NULL,
+	[data] [nvarchar](max) NULL
+) 
+GO
+CREATE OR ALTER VIEW [Vw_datagov_JSON_staging] AS 
+SELECT
+  [i]
+, [id]
+, [data]
+FROM [Tbl_datagov_JSON_staging];
+GO
+*/
+
+--loading
+INSERT INTO [Vw_datagov_JSON_staging]
+SELECT 
+  dg.*
+FROM OPENROWSET (BULK 'S:\_ue\datagov20211128b.json', SINGLE_CLOB) as j
+CROSS APPLY OPENJSON(BulkColumn)
+WITH( 
+	  [i] varchar(8000) '$.i'
+	, [id] varchar(8000) '$.id'
+	, [data] nvarchar(max) AS JSON
+) AS dg
+GO
+
+/*
+--Views fo dissecting
+CREATE OR ALTER     VIEW [dbo].[Vw_datagov_level_1] AS
+SELECT 
+  d.[hID]
+--, d.[StringLength]
+--, d.[StringHash]
+--, d.[i]
+--, d.[id]
+, d.[data]
+, d2.*
+FROM [Tbl_datagov_JSON_staging] d
+CROSS APPLY OPENJSON(d.[data]) 
+WITH (
+  [contact-email] varchar(8000) '$."contact-email"'
+, [license_title] varchar(8000) '$.license_title'
+, [relationships_as_object] nvarchar(max) '$.relationships_as_object' AS JSON
+, [private] varchar(8000) '$.private'
+, [num_tags] varchar(8000) '$.num_tags'
+, [id] varchar(8000) '$.id'
+, [metadata_created] varchar(8000) '$.metadata_created'
+, [owner_org] varchar(8000) '$.owner_org'
+, [metadata_modified] varchar(8000) '$.metadata_modified'
+, [state] varchar(8000) '$.state'
+, [version] varchar(8000) '$.version'
+, [license_id] varchar(8000) '$.license_id'
+, [type] varchar(8000) '$.type'
+, [resources] nvarchar(max) '$.resources' AS JSON
+, [num_resources] varchar(8000) '$.num_resources'
+, [tags] nvarchar(max) '$.tags' AS JSON
+, [groups] nvarchar(max) '$.groups' AS JSON
+, [creator_user_id] varchar(8000) '$.creator_user_id'
+, [relationships_as_subject] nvarchar(max) '$.relationships_as_subject' AS JSON
+, [name] varchar(8000) '$.name'
+, [isopen] varchar(8000) '$.isopen'
+, [url] varchar(8000) '$.url'
+, [notes] varchar(8000) '$.notes'
+, [title] varchar(8000) '$.title'
+, [extras] nvarchar(max) '$.extras' AS JSON
+, [organization] nvarchar(max) '$.organization' AS JSON
+, [revision_id] varchar(8000) '$.revision_id'
+) AS d2
+GO
+CREATE OR ALTER         VIEW [dbo].[Vw_datagov_Resources] AS
+SELECT 
+  d.[hID]
+, d.[StringLength]
+, d.[StringHash]
+, d.[i]
+, d.[id]
+, d.[data]
+, d2.*
+, ROW_NUMBER() OVER(Partition by hID ORDER BY hID) AS 'Resources_Row_Number'
+, d3.*
+FROM [Tbl_datagov_JSON_staging] d
+CROSS APPLY OPENJSON(d.[data]) 
+WITH (
+  [json_resources] nvarchar(max) '$.resources' AS JSON
+) AS d2
+CROSS APPLY OPENJSON(d2.[json_resources], '$')  with ( a2 nvarchar(MAX) '$' AS JSON )
+CROSS APPLY OPENJSON( a2 , '$') 
+WITH (
+  cache_last_updated NVARCHAR(MAX) '$.cache_last_updated'
+, cache_url NVARCHAR(MAX) '$.cache_url'
+, mimetype_inner NVARCHAR(MAX) '$.mimetype_inner'
+, hash NVARCHAR(MAX) '$.hash'
+, description NVARCHAR(MAX) '$.description'
+, format NVARCHAR(MAX) '$.format'
+, url NVARCHAR(MAX) '$.url'
+, created NVARCHAR(MAX) '$.created'
+, state NVARCHAR(MAX) '$.state'
+, package_id NVARCHAR(MAX) '$.package_id'
+, last_modified NVARCHAR(MAX) '$.last_modified'
+, mimetype NVARCHAR(MAX) '$.mimetype'
+, url_type NVARCHAR(MAX) '$.url_type'
+, position NVARCHAR(MAX) '$.position'
+, revision_id NVARCHAR(MAX) '$.revision_id'
+, size NVARCHAR(MAX) '$.size'
+, Resources_id NVARCHAR(MAX) '$.id'
+, resource_type NVARCHAR(MAX) '$.resource_type'
+, name NVARCHAR(MAX) '$.name'
+) d3
+GO
+CREATE OR ALTER         VIEW [dbo].[Vw_datagov_Organization] AS
+SELECT 
+  d.[hID]
+, d.[StringLength]
+, d.[StringHash]
+, d.[i]
+, d.[id]
+, d.[data]
+, d2.*
+, d6.*
+FROM [Tbl_datagov_JSON_staging] d
+CROSS APPLY OPENJSON(d.[data]) 
+WITH (
+  [json_organisation] nvarchar(max) '$.organization' AS JSON
+) AS d2
+CROSS APPLY OPENJSON(d2.[json_organisation])  
+WITH (
+  description NVARCHAR(MAX) '$.description'
+, title NVARCHAR(MAX) '$.title'
+, created NVARCHAR(MAX) '$.created'
+, approval_status NVARCHAR(MAX) '$.approval_status'
+, is_organization NVARCHAR(MAX) '$.is_organization'
+, state NVARCHAR(MAX) '$.state'
+, image_url NVARCHAR(MAX) '$.image_url'
+, revision_id NVARCHAR(MAX) '$.revision_id'
+, type NVARCHAR(MAX) '$.type'
+, Organization_id NVARCHAR(MAX) '$.id'
+, name NVARCHAR(MAX) '$.name'
+) d6
+GO
+CREATE OR ALTER           VIEW [dbo].[Vw_datagov_Extras] AS
+SELECT 
+  d.[hID]
+, d.[StringLength]
+, d.[StringHash]
+, d.[i]
+, d.[id]
+, d.[data]
+, d2.*
+, ROW_NUMBER() OVER(Partition by hID ORDER BY hID) AS 'Tags_Row_Number'
+, d5.*
+FROM [Tbl_datagov_JSON_staging] d
+CROSS APPLY OPENJSON(d.[data]) 
+WITH (
+  [json_extras] nvarchar(max) '$.tags' AS JSON
+) AS d2
+CROSS APPLY OPENJSON(d2.[json_extras], '$')  with ( a3 nvarchar(MAX) '$' AS JSON )
+CROSS APPLY OPENJSON( a3 , '$') 
+WITH (
+  extras_value NVARCHAR(MAX) '$.value'
+, extras_key NVARCHAR(MAX) '$.key'
+) d5
+GO
+CREATE OR ALTER         VIEW [dbo].[Vw_datagov_Tags] AS
+SELECT 
+  d.[hID]
+, d.[StringLength]
+, d.[StringHash]
+, d.[i]
+, d.[id]
+, d.[data]
+, d2.*
+, ROW_NUMBER() OVER(Partition by hID ORDER BY hID) AS 'Tags_Row_Number'
+, d4.*
+FROM [Tbl_datagov_JSON_staging] d
+CROSS APPLY OPENJSON(d.[data]) 
+WITH (
+  [json_tags] nvarchar(max) '$.tags' AS JSON
+) AS d2
+CROSS APPLY OPENJSON(d2.[json_tags], '$')  with ( a3 nvarchar(MAX) '$' AS JSON )
+CROSS APPLY OPENJSON( a3 , '$') 
+WITH (
+  vocabulary_id NVARCHAR(MAX) '$.vocabulary_id'
+, state NVARCHAR(MAX) '$.state'
+, display_name NVARCHAR(MAX) '$.display_name'
+, tags_id NVARCHAR(MAX) '$.id'
+, name NVARCHAR(MAX) '$.name'
+) d4
+GO
+*/
+#>

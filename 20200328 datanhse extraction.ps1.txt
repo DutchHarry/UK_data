@@ -1,0 +1,66 @@
+s:
+cd s:\_ue
+
+<#
+Purpose:
+Extract NHS England metadata as JSON and CSVs
+
+#>
+
+$totalsets = 3000                                  # <-- CHANGE      look at https://data.england.nhs.uk/ to get number 1281 incl archived
+$extractiondate = "20211130"                       # <-- CHANGE ; only used for naming files
+#change window title
+$host.ui.RawUI.WindowTitle = "dataNHSE metadata extraction"
+
+# api: https://data.england.nhs.uk/api/action/package_search?q=
+#NHSE using Powershell 5.0
+$filename = "dataNHSE$extractiondate.json"    # saved in this file
+
+$limit=100                 # 250 also works but occasionally times out; all used to work
+$iterations = [math]::ceiling($totalsets/$limit) 
+#$iterations = 1   # for testing
+$json = @()        # start with empty object
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+for($i=0; $i -le $iterations; $i++)
+	{
+		$offset= $i * $limit
+		$url = "https://data.england.nhs.uk/api/action/current_package_list_with_resources?limit=$limit&offset=$offset"
+		$json += Invoke-RestMethod  -Uri $url -ContentType 'application/json'
+    Write-Progress -Activity "Gathering extracts" -Status "Found Page $i" -percentComplete ($i / $iterations * 100)
+  } # end for loop
+
+
+if ($url.contains("current_package_list_with_resources") -eq $true)
+{
+	$extractionsuffix = "current_package_list_with_resources_$extractiondate"  <# for current_package_list_with_resources #>
+} `        <# needs line cont to avoid 'else' not getting recognised #> `
+else 
+{
+  $extractionsuffix = "package_search_$extractiondate"  <# for package_search #> `
+}
+
+$path_results = ".\DataNhse_Results_$extractionsuffix.csv"
+$path_resources = ".\DataNhse_resources_$extractionsuffix.csv"
+$path_tags = ".\DataNhse_tags_$extractionsuffix.csv"
+$path_organization = ".\DataNhse_organization_$extractionsuffix.csv"
+$path_groups = ".\DataNhse_groups_$extractionsuffix.csv"
+$path_extras = ".\DataNhse_extras_$extractionsuffix.csv"
+$path_resources2 = ".\DataNhse_resources2_$extractionsuffix.csv"
+
+$json.result | ConvertTo-Json -Depth 100 | Out-File -Filepath $filename -Encoding UTF8
+$json.result | % { $topid = $_.id; $_ | Select @{Name='TopID';Expression={$topid}}, * } | Export-CSV $path_results -NoTypeInformation
+$json.result | % { $topid = $_.id; $_.organization | Select @{Name='TopID';Expression={$topid}}, * } | Export-CSV $path_organization -NoTypeInformation
+$json.result | % { $topid = $_.id; $_.resources | Select @{Name='TopID';Expression={$topid}}, * } | Export-CSV $path_resources -NoTypeInformation
+$json.result | % { $topid = $_.id; $_.tags | Select @{Name='TopID';Expression={$topid}}, * } | Export-CSV $path_tags -NoTypeInformation
+$json.result | % { $topid = $_.id; $_.extras| Select @{Name='TopID';Expression={$topid}}, * } | Export-CSV $path_extras -NoTypeInformation
+
+# file for quick selection of stuff to download
+$json.result | % { 
+  $topid = $_.id; 
+  $result_organization_title = $_.organization.title; 
+  $result_organization_name = $_.organization.name; 
+  $result_name = $_.name; 
+  $_.resources | Select @{Name='TopID';Expression={$topid}}, @{Name='result_organization_title';Expression={$result_organization_title}}, @{Name='result_organization_name';Expression={$result_organization_name}}, @{Name='result_name';Expression={$result_name}}, * 
+} | Export-CSV "$path_resources2" -NoTypeInformation

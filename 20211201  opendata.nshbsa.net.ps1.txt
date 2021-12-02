@@ -1,0 +1,10 @@
+# opendata.nshbsa.net
+$json = $null
+$url = "https://opendata.nhsbsa.net/api/action/current_package_list_with_resources"
+$json += Invoke-RestMethod  -Uri $url -ContentType 'application/json'
+$numpubs = $json.result.count
+Write-Host "number of publications : $numpubs"
+$numresources = $json.result.resources.count
+Write-Host "number of resources : $numpubs"
+#download links of resources
+$json.result.resources.url
